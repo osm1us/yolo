@@ -386,11 +386,12 @@ class ChatEngine:
     model_name: Optional[str] = None
     prefer_new_sdk: bool = True
     system_instruction: str = ""
+    allow_legacy_fallback: bool = True
 
     def __post_init__(self) -> None:
         self.backend = None
         self._new_genai = _safe_import_new_sdk() if self.prefer_new_sdk else None
-        self._legacy_genai = _safe_import_legacy_sdk()
+        self._legacy_genai = None
 
         if self._new_genai is not None:
             self.backend = "google-genai"
@@ -398,6 +399,9 @@ class ChatEngine:
             self.model_name = self.model_name or self._pick_new_model(preferred_hint="gemini-3")
             self.chat = self.client.chats.create(model=self.model_name)
             return
+
+        if self.allow_legacy_fallback:
+            self._legacy_genai = _safe_import_legacy_sdk()
 
         if self._legacy_genai is not None:
             self.backend = "google-generativeai"
@@ -573,6 +577,7 @@ def start(
     profile: str = "default",
     max_context_chars: int = 120_000,
     system_prompt: Optional[str] = None,
+    allow_legacy_fallback: bool = True,
 ) -> object:
     key = _get_api_key(api_key)
 
@@ -583,6 +588,7 @@ def start(
             api_key=key,
             model_name=model_name,
             system_instruction=sys_inst,
+            allow_legacy_fallback=allow_legacy_fallback,
         )
         return start_cli(engine)
 
@@ -590,6 +596,7 @@ def start(
         api_key=key,
         model_name=model_name,
         system_instruction=sys_inst,
+        allow_legacy_fallback=allow_legacy_fallback,
     )
     session = AssistantSession(engine=engine, profile=profile, context=ContextStore(max_total_chars=max_context_chars))
     return WidgetChat(session)
