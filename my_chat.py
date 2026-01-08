@@ -54,6 +54,17 @@ def _looks_like_model_error(msg: str) -> bool:
     )
 
 
+def _looks_like_quota_error(msg: str) -> bool:
+    low = msg.lower()
+    return (
+        "quota" in low
+        or "resource_exhausted" in low
+        or "rate limit" in low
+        or "too many requests" in low
+        or "429" in low
+    )
+
+
 def _pick_best_model_name(model_names: Iterable[str], preferred_hint: str) -> str:
     names = [n for n in model_names if n]
     lowered = [(n, n.lower()) for n in names]
@@ -66,8 +77,10 @@ def _pick_best_model_name(model_names: Iterable[str], preferred_hint: str) -> st
         return None
 
     for candidate in (
+        find_by_all_terms("gemini-3", "flash"),
         find_by_all_terms("gemini-3", "pro"),
         find_by_all_terms("gemini-3", "pro", "preview"),
+        find_by_all_terms(preferred_hint, "flash"),
         find_by_all_terms(preferred_hint, "pro"),
         find_by_all_terms("gemini-2.5", "pro"),
         find_by_all_terms("gemini-2.5", "flash"),
@@ -311,8 +324,10 @@ def _handle_command(
                 "/add <path>",
                 "/adddir <dir> [glob]",
                 "/refresh",
+                "/use <model>",
                 "/drop <path>",
                 "/clear",
+                "/prompt",
             ]
         )
 
@@ -377,6 +392,15 @@ def _handle_command(
     if cmd == "/refresh":
         return ctx.refresh()
 
+    if cmd == "/use":
+        if not args:
+            return "usage: /use <model>"
+        model = " ".join(args).strip()
+        if not model:
+            return "usage: /use <model>"
+        engine.set_model(model)
+        return f"ok: model={engine.model_name}"
+
     return "unknown command"
 
 
@@ -429,6 +453,18 @@ class ChatEngine:
         except Exception:
             return "gemini-2.5-flash"
 
+    def set_model(self, model_name: str) -> None:
+        if not model_name:
+            return
+        self.model_name = model_name
+        if self.backend == "google-genai":
+            self.chat = self.client.chats.create(model=self.model_name)
+            return
+        if self.backend == "google-generativeai":
+            self.model = self._legacy_genai.GenerativeModel(self.model_name)
+            self.chat = self.model.start_chat(history=[])
+            return
+
     def send(self, message: str) -> str:
         if not message:
             return ""
@@ -441,13 +477,21 @@ class ChatEngine:
             resp = self.chat.send_message(message)
             return getattr(resp, "text", "")
         except Exception as e:
-            if self.backend == "google-genai" and _looks_like_model_error(str(e)):
-                alt = self._pick_new_model(preferred_hint="gemini-2")
-                if alt and alt != self.model_name:
-                    self.model_name = alt
-                    self.chat = self.client.chats.create(model=self.model_name)
-                    resp = self.chat.send_message(message=message)
-                    return getattr(resp, "text", "")
+            if self.backend == "google-genai":
+                msg = str(e)
+                if _looks_like_quota_error(msg):
+                    alt = self._pick_new_model(preferred_hint="flash")
+                    if alt and alt != self.model_name:
+                        self.set_model(alt)
+                        resp = self.chat.send_message(message=message)
+                        return getattr(resp, "text", "")
+
+                if _looks_like_model_error(msg):
+                    alt = self._pick_new_model(preferred_hint="flash")
+                    if alt and alt != self.model_name:
+                        self.set_model(alt)
+                        resp = self.chat.send_message(message=message)
+                        return getattr(resp, "text", "")
             raise
 
 
