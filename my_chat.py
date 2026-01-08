@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import glob
+import html
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -536,18 +537,20 @@ class AssistantSession:
 class WidgetChat:
     def __init__(self, session: AssistantSession):
         import ipywidgets as widgets
-        from IPython.display import Markdown, clear_output, display
+        from IPython.display import display
 
         self.session = session
         self.model_name = session.engine.model_name
 
         self._widgets = widgets
-        self._Markdown = Markdown
-        self._clear_output = clear_output
         self._display = display
         self._in_flight = False
 
-        self.output_area = widgets.Output()
+        self.header = widgets.HTML()
+        self.chat_box = widgets.VBox(
+            layout=widgets.Layout(width="100%", height="420px", overflow_y="auto")
+        )
+
         self.text_input = widgets.Textarea(
             placeholder="Напиши вопрос или скопируй ошибку сюда...",
             layout=widgets.Layout(width="100%", height="100px"),
@@ -557,20 +560,136 @@ class WidgetChat:
             button_style="info",
             layout=widgets.Layout(width="150px"),
         )
-        self.clear_btn = widgets.Button(description="Очистить вывод", button_style="warning")
+        self.clear_btn = widgets.Button(description="Очистить чат", button_style="warning")
+
+        self.btn_status = widgets.Button(description="Status", layout=widgets.Layout(width="110px"))
+        self.btn_ctx = widgets.Button(description="Context", layout=widgets.Layout(width="110px"))
+        self.btn_prompt = widgets.Button(description="Prompt", layout=widgets.Layout(width="110px"))
+        self.btn_models = widgets.Button(description="Models", layout=widgets.Layout(width="110px"))
+        self.btn_help = widgets.Button(description="Help", layout=widgets.Layout(width="110px"))
+
+        self.panel_status = widgets.Textarea(layout=widgets.Layout(width="100%", height="260px"), disabled=True)
+        self.panel_ctx = widgets.Textarea(layout=widgets.Layout(width="100%", height="260px"), disabled=True)
+        self.panel_prompt = widgets.Textarea(layout=widgets.Layout(width="100%", height="260px"), disabled=True)
+        self.panel_models = widgets.Textarea(layout=widgets.Layout(width="100%", height="260px"), disabled=True)
+        self.panel_help = widgets.Textarea(layout=widgets.Layout(width="100%", height="260px"), disabled=True)
+
+        self.tabs = widgets.Tab(children=[self.panel_status, self.panel_ctx, self.panel_prompt, self.panel_models, self.panel_help])
+        self.tabs.set_title(0, "Status")
+        self.tabs.set_title(1, "Context")
+        self.tabs.set_title(2, "Prompt")
+        self.tabs.set_title(3, "Models")
+        self.tabs.set_title(4, "Help")
 
         self.send_btn.on_click(self.handle_submit)
         self.clear_btn.on_click(self.clear_output)
+        self.btn_status.on_click(lambda _b: self._refresh_panel("/status"))
+        self.btn_ctx.on_click(lambda _b: self._refresh_panel("/ctx"))
+        self.btn_prompt.on_click(lambda _b: self._refresh_panel("/prompt"))
+        self.btn_models.on_click(lambda _b: self._refresh_panel("/models"))
+        self.btn_help.on_click(lambda _b: self._refresh_panel("/help"))
+
+        self._render_header()
+        self._refresh_panel("/status")
+        self._refresh_panel("/help")
 
         display(
-            widgets.VBox(
+            widgets.HBox(
                 [
-                    self.output_area,
-                    self.text_input,
-                    widgets.HBox([self.send_btn, self.clear_btn]),
-                ]
+                    widgets.VBox(
+                        [
+                            self.header,
+                            self.chat_box,
+                            self.text_input,
+                            widgets.HBox([self.send_btn, self.clear_btn]),
+                        ],
+                        layout=widgets.Layout(width="70%"),
+                    ),
+                    widgets.VBox(
+                        [
+                            widgets.HBox(
+                                [self.btn_status, self.btn_ctx, self.btn_prompt, self.btn_models, self.btn_help],
+                                layout=widgets.Layout(justify_content="space-between"),
+                            ),
+                            self.tabs,
+                        ],
+                        layout=widgets.Layout(width="30%"),
+                    ),
+                ],
+                layout=widgets.Layout(width="100%"),
             )
         )
+
+    def _render_header(self) -> None:
+        backend = self.session.engine.backend
+        model = self.session.engine.model_name
+        self.header.value = (
+            "<div style='display:flex;gap:12px;align-items:center;"
+            "padding:8px 10px;border:1px solid #333;border-radius:8px;'>"
+            f"<div><b>Backend</b>: {html.escape(str(backend))}</div>"
+            f"<div><b>Model</b>: {html.escape(str(model))}</div>"
+            "</div>"
+        )
+
+    def _append_message(self, role: str, text: str, *, pending: bool = False) -> "object":
+        safe = html.escape(text or "")
+        if role == "user":
+            style = "background:#1f2937;border:1px solid #374151;"
+            title = "You"
+        else:
+            style = "background:#111827;border:1px solid #1f2937;"
+            title = "Gemini"
+
+        suffix = " <span style='opacity:0.7'>(...)</span>" if pending else ""
+        box = self._widgets.HTML(
+            value=(
+                "<div style='margin:8px 0;padding:10px;border-radius:10px;" + style + "'>"
+                f"<div style='font-weight:700;margin-bottom:6px'>{title}{suffix}</div>"
+                f"<div style='white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;'>{safe}</div>"
+                "</div>"
+            )
+        )
+        self.chat_box.children = (*self.chat_box.children, box)
+        return box
+
+    def _update_message(self, box: "object", role: str, text: str) -> None:
+        safe = html.escape(text or "")
+        if role == "user":
+            style = "background:#1f2937;border:1px solid #374151;"
+            title = "You"
+        else:
+            style = "background:#111827;border:1px solid #1f2937;"
+            title = "Gemini"
+        box.value = (
+            "<div style='margin:8px 0;padding:10px;border-radius:10px;" + style + "'>"
+            f"<div style='font-weight:700;margin-bottom:6px'>{title}</div>"
+            f"<div style='white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;'>{safe}</div>"
+            "</div>"
+        )
+
+    def _refresh_panel(self, command: str) -> None:
+        try:
+            text = self.session.handle_user_input(command)
+        except Exception as e:
+            text = f"ERROR: {e}"
+
+        if command == "/status":
+            self.panel_status.value = text
+            self.tabs.selected_index = 0
+        elif command == "/ctx":
+            self.panel_ctx.value = text
+            self.tabs.selected_index = 1
+        elif command == "/prompt":
+            self.panel_prompt.value = text
+            self.tabs.selected_index = 2
+        elif command == "/models":
+            self.panel_models.value = text
+            self.tabs.selected_index = 3
+        elif command == "/help":
+            self.panel_help.value = text
+            self.tabs.selected_index = 4
+
+        self._render_header()
 
     def handle_submit(self, _b):
         if self._in_flight:
@@ -580,35 +699,27 @@ class WidgetChat:
         if not user_msg:
             return
 
+        self.text_input.value = ""
+
         self._in_flight = True
         self.send_btn.disabled = True
 
-        with self.output_area:
-            self._clear_output(wait=True)
-            print(f"User: {user_msg}\n")
-            print("Gemini думает...")
+        self._append_message("user", user_msg)
+        pending = self._append_message("assistant", "Gemini думает...", pending=True)
 
-            try:
-                text = self.session.handle_user_input(user_msg)
-                self.model_name = self.session.engine.model_name
-                self._clear_output(wait=True)
-                self._display(self._Markdown(f"**Вопрос:** {user_msg}"))
-                self._display(self._Markdown("---"))
-                self._display(self._Markdown(text))
-                self._display(self._Markdown("___"))
-            except Exception as e:
-                self._clear_output(wait=True)
-                self._display(self._Markdown(f"**Вопрос:** {user_msg}"))
-                self._display(self._Markdown("---"))
-                self._display(self._Markdown(f"**Ошибка API:** `{e}`"))
-                self._display(self._Markdown("___"))
-            finally:
-                self.send_btn.disabled = False
-                self._in_flight = False
+        try:
+            text = self.session.handle_user_input(user_msg)
+            self.model_name = self.session.engine.model_name
+            self._update_message(pending, "assistant", text)
+        except Exception as e:
+            self._update_message(pending, "assistant", f"Ошибка API: {e}")
+        finally:
+            self._render_header()
+            self.send_btn.disabled = False
+            self._in_flight = False
 
     def clear_output(self, _b):
-        with self.output_area:
-            self._clear_output()
+        self.chat_box.children = ()
 
 
 def list_models(api_key: Optional[str] = None) -> list[str]:
