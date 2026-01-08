@@ -65,6 +65,17 @@ def _looks_like_quota_error(msg: str) -> bool:
     )
 
 
+def _normalize_new_model_name(name: str) -> str:
+    n = (name or "").strip()
+    if not n:
+        return n
+    if n.startswith("models/"):
+        return n
+    if "/" in n:
+        return n
+    return f"models/{n}"
+
+
 def _pick_best_model_name(model_names: Iterable[str], preferred_hint: str) -> str:
     names = [n for n in model_names if n]
     lowered = [(n, n.lower()) for n in names]
@@ -420,8 +431,8 @@ class ChatEngine:
         if self._new_genai is not None:
             self.backend = "google-genai"
             self.client = self._new_genai.Client(api_key=self.api_key)
-            self.model_name = self.model_name or self._pick_new_model(preferred_hint="gemini-3")
-            self.chat = self.client.chats.create(model=self.model_name)
+            chosen = self.model_name or self._pick_new_model(preferred_hint="flash")
+            self.set_model(chosen)
             return
 
         if self.allow_legacy_fallback:
@@ -456,7 +467,10 @@ class ChatEngine:
     def set_model(self, model_name: str) -> None:
         if not model_name:
             return
-        self.model_name = model_name
+        if self.backend == "google-genai":
+            self.model_name = _normalize_new_model_name(model_name)
+        else:
+            self.model_name = model_name
         if self.backend == "google-genai":
             self.chat = self.client.chats.create(model=self.model_name)
             return
