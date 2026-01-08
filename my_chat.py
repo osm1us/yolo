@@ -604,32 +604,37 @@ class WidgetChat:
         self._refresh_panel("/status")
         self._refresh_panel("/help")
 
-        display(
-            widgets.HBox(
-                [
-                    widgets.VBox(
-                        [
-                            self.header,
-                            self.chat_box,
-                            self.text_input,
-                            widgets.HBox([self.send_btn, self.clear_btn]),
-                        ],
-                        layout=widgets.Layout(width="70%"),
-                    ),
-                    widgets.VBox(
-                        [
-                            widgets.HBox(
-                                [self.btn_status, self.btn_ctx, self.btn_prompt, self.btn_models, self.btn_help],
-                                layout=widgets.Layout(justify_content="space-between"),
-                            ),
-                            self.tabs,
-                        ],
-                        layout=widgets.Layout(width="30%"),
-                    ),
-                ],
-                layout=widgets.Layout(width="100%"),
-            )
+        self.root = widgets.HBox(
+            [
+                widgets.VBox(
+                    [
+                        self.header,
+                        self.chat_box,
+                        self.text_input,
+                        widgets.HBox([self.send_btn, self.clear_btn]),
+                    ],
+                    layout=widgets.Layout(width="70%"),
+                ),
+                widgets.VBox(
+                    [
+                        widgets.HBox(
+                            [self.btn_status, self.btn_ctx, self.btn_prompt, self.btn_models, self.btn_help],
+                            layout=widgets.Layout(justify_content="space-between"),
+                        ),
+                        self.tabs,
+                    ],
+                    layout=widgets.Layout(width="30%"),
+                ),
+            ],
+            layout=widgets.Layout(width="100%"),
         )
+
+        display(self.root)
+
+    def _ipython_display_(self) -> None:
+        from IPython.display import display
+
+        display(self.root)
 
     def _render_header(self) -> None:
         backend = self.session.engine.backend
