@@ -27,6 +27,8 @@ def _safe_import_legacy_sdk():
 
 
 def _is_notebook() -> bool:
+    if os.getenv("COLAB_RELEASE_TAG") or os.getenv("COLAB_BACKEND_VERSION"):
+        return True
     try:
         from IPython import get_ipython
 
@@ -36,6 +38,15 @@ def _is_notebook() -> bool:
         return ip.__class__.__name__ == "ZMQInteractiveShell"
     except Exception:
         return False
+
+
+def _try_enable_colab_widgets() -> None:
+    try:
+        from google.colab import output
+
+        output.enable_custom_widget_manager()
+    except Exception:
+        return
 
 
 def _get_api_key(api_key: Optional[str]) -> str:
@@ -761,6 +772,9 @@ def start(
             allow_legacy_fallback=allow_legacy_fallback,
         )
         return start_cli(engine)
+
+    if ui in {"auto", "widget"}:
+        _try_enable_colab_widgets()
 
     engine = ChatEngine(
         api_key=key,
